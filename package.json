@@ -1,0 +1,19 @@
+{
+  "name": "smart-ambulance-routing",
+  "version": "1.0.0",
+  "description": "AI-Based Smart Emergency Ambulance Routing and Treatment-Ready Hospital Selection",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx serve -s . -l 8080",
+    "dev": "npx serve ."
+  },
+  "keywords": [
+    "ambulance",
+    "ai-routing",
+    "emergency-response",
+    "healthcare",
+    "smart-city"
+  ],
+  "author": "Monika.R.K, Sahana.S, Rubini.P, Nigidha.B (J.J. College of Engineering and Technology)",
+  "license": "MIT"
+}

@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: smart-ambulance-routing
+    runtime: static
+    buildCommand: ""
+    staticPublishPath: .
+    pullRequestPreviewsEnabled: true
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: max-age=3600

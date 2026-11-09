@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Ambulance Routing | AI-Based Hospital Selection & Emergency Routing</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              100: '#dbeafe',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              800: '#1e40af',
+              900: '#1e3a8a',
+            },
+            emergency: {
+              red: '#ef4444',
+              orange: '#f97316',
+              green: '#10b981',
+              dark: '#0b0f19',
+              hud: '#05070d'
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Google Fonts & Leaflet CSS -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col antialiased selection:bg-blue-600 selection:text-white">
+
+  <!-- TOP INSTITUTION BANNER (From Slide 1) -->
+  <div class="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white text-xs sm:text-sm py-2 px-4 shadow-sm border-b border-blue-800/40">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
+      <div class="flex items-center space-x-2">
+        <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-red-600 text-white font-bold text-xs shadow-sm">
+          <i class="fa-solid fa-hospital"></i>
+        </span>
+        <span class="font-semibold tracking-wide">J.J. COLLEGE OF ENGINEERING AND TECHNOLOGY</span>
+        <span class="hidden md:inline text-blue-300">| (Sowdambikaa Group of Institutions)</span>
+      </div>
+      <div class="flex items-center space-x-3 text-xs text-blue-200">
+        <span class="bg-blue-800/60 px-2.5 py-0.5 rounded-full border border-blue-700/50">
+          <i class="fa-solid fa-code-branch mr-1 text-emerald-400"></i> AI & Smart City Project
+        </span>
+        <span class="hidden sm:inline">Approved by AICTE | Affiliated to Anna University</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- NAVIGATION HEADER -->
+  <header class="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-sm transition-all duration-200">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-16">
+        <!-- Logo & Title -->
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-red-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20 ring-2 ring-white">
+            <i class="fa-solid fa-truck-medical text-lg animate-pulse"></i>
+          </div>
+          <div>
+            <div class="flex items-center space-x-2">
+              <h1 class="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">Smart<span class="text-blue-600">Ambulance</span><span class="text-red-500">Routing</span></h1>
+              <span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-blue-100 text-blue-700 border border-blue-200">AI Core v2.4</span>
+            </div>
+            <p class="text-[11px] text-slate-500 hidden sm:block">AI-Based Emergency Routing & Treatment-Ready Hospital Selection</p>
+          </div>
+        </div>
+
+        <!-- Navigation Tabs -->
+        <nav class="hidden md:flex items-center space-x-1 lg:space-x-2">
+          <button onclick="switchTab('dispatch')" id="tab-btn-dispatch" class="nav-tab active-tab px-3 py-2 rounded-lg text-sm font-semibold transition flex items-center space-x-1.5">
+            <i class="fa-solid fa-route"></i>
+            <span>Live Dispatch & Map</span>
+          </button>
+          <button onclick="switchTab('prealert')" id="tab-btn-prealert" class="nav-tab px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-slate-900 transition flex items-center space-x-1.5">
+            <i class="fa-solid fa-bell text-red-500 animate-bounce"></i>
+            <span>Hospital Pre-Alert HUD</span>
+          </button>
+          <button onclick="switchTab('bloodbank')" id="tab-btn-bloodbank" class="nav-tab px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-slate-900 transition flex items-center space-x-1.5">
+            <i class="fa-solid fa-droplet text-red-500"></i>
+            <span>Blood Bank Network</span>
+          </button>
+          <button onclick="switchTab('scoring')" id="tab-btn-scoring" class="nav-tab px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-slate-900 transition flex items-center space-x-1.5">
+            <i class="fa-solid fa-sliders text-indigo-500"></i>
+            <span>AI Scoring Model</span>
+          </button>
+          <button onclick="switchTab('presentation')" id="tab-btn-presentation" class="nav-tab px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-slate-900 transition flex items-center space-x-1.5">
+            <i class="fa-solid fa-book-open text-blue-500"></i>
+            <span>Project Slides & Team</span>
+          </button>
+        </nav>
+
+        <!-- Action / Emergency Button -->
+        <div class="flex items-center space-x-2">
+          <button onclick="triggerEmergencyDemo()" class="relative inline-flex items-center justify-center px-4 py-2 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-red-600 to-rose-600 rounded-lg shadow-md hover:from-red-700 hover:to-rose-700 active:scale-95 transition-all shadow-red-500/25">
+            <span class="w-2 h-2 mr-2 rounded-full bg-white animate-ping"></span>
+            <i class="fa-solid fa-bullhorn mr-1.5"></i> Simulate 911/108
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mobile Navigation Bar -->
+    <div class="md:hidden border-t border-slate-200 bg-white/95 px-2 py-1.5 overflow-x-auto flex space-x-1 scrollbar-none">
+      <button onclick="switchTab('dispatch')" class="mobile-tab px-3 py-1.5 text-xs font-semibold rounded-md whitespace-nowrap bg-blue-50 text-blue-700">Dispatch & Map</button>
+      <button onclick="switchTab('prealert')" class="mobile-tab px-3 py-1.5 text-xs font-medium text-slate-600 rounded-md whitespace-nowrap">Pre-Alert HUD</button>
+      <button onclick="switchTab('bloodbank')" class="mobile-tab px-3 py-1.5 text-xs font-medium text-slate-600 rounded-md whitespace-nowrap">Blood Bank</button>
+      <button onclick="switchTab('scoring')" class="mobile-tab px-3 py-1.5 text-xs font-medium text-slate-600 rounded-md whitespace-nowrap">AI Weights</button>
+      <button onclick="switchTab('presentation')" class="mobile-tab px-3 py-1.5 text-xs font-medium text-slate-600 rounded-md whitespace-nowrap">Project Slides</button>
+    </div>
+  </header>
+
+  <!-- MOTIVE SLOGAN BAR (From Slide 1) -->
+  <div class="bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-600 text-white text-center py-2 px-4 shadow-sm text-xs sm:text-sm font-medium tracking-wide">
+    <span class="opacity-90">Our Motive:</span> 
+    <span class="font-extrabold italic tracking-normal underline decoration-yellow-300 decoration-2 underline-offset-2">
+      “Right Patient. Right Hospital. Right Resources. Right Route. Minimum Delay.”
+    </span>
+  </div>
+
+  <!-- MAIN CONTAINER -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
+
+    <!-- ========================================== -->
+    <!-- TAB 1: LIVE DISPATCH & DYNAMIC ROUTING MAP -->
+    <!-- ========================================== -->
+    <section id="tab-dispatch" class="tab-pane block space-y-6">
+      
+      <!-- Top Overview Notification / Status Card -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+        <div class="flex items-center space-x-4">
+          <div class="w-12 h-12 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600 text-xl flex-shrink-0">
+            <i class="fa-solid fa-brain-circuit"></i>
+          </div>
+          <div>
+            <div class="flex items-center space-x-2">
+              <h2 class="text-base sm:text-lg font-bold text-slate-900">Autonomous Emergency Dispatch & Treatment-Readiness Matcher</h2>
+              <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                <i class="fa-solid fa-circle-check text-[10px] mr-1"></i> System Online
+              </span>
+            </div>
+            <p class="text-xs sm:text-sm text-slate-600 mt-0.5">
+              Overcomes the traditional nearest-hospital flaw by balancing <span class="font-semibold text-slate-800">patient condition, ICU beds, specialists, equipment, blood, traffic and travel time</span>.
+            </p>
+          </div>
+        </div>
+
+        <!-- Quick Stats -->
+        <div class="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+          <div class="bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-center min-w-[100px]">
+            <span class="text-[11px] text-slate-500 uppercase font-semibold block">Hospitals Active</span>
+            <span class="text-base font-bold text-slate-800" id="stat-hospitals-count">3 Monitored</span>
+          </div>
+          <div class="bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-center min-w-[100px]">
+            <span class="text-[11px] text-slate-500 uppercase font-semibold block">Blood Banks</span>
+            <span class="text-base font-bold text-red-600">4 Connected</span>
+          </div>
+          <div class="bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2 text-center min-w-[120px]">
+            <span class="text-[11px] text-emerald-700 uppercase font-semibold block">AI Decision Delay</span>
+            <span class="text-base font-bold text-emerald-700">< 0.4 sec</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Grid: Left Emergency Configurator & Results | Right Interactive OpenStreetMap -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- Left Controls: 5 cols -->
+        <div class="lg:col-span-5 space-y-6">
+
+          <!-- Patient & Emergency Input Form -->
+          <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-5">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div class="flex items-center space-x-2">
+                <i class="fa-solid fa-notes-medical text-blue-600"></i>
+                <h3 class="font-bold text-slate-900 text-sm sm:text-base">1. Emergency Incident Parameters</h3>
+              </div>
+              <span class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono">ID: #AMB-2026-904</span>
+            </div>
+
+            <!-- Emergency Type Selection -->
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1.5">Emergency Type / Medical Case</label>
+              <select id="select-emergency-type" onchange="handleEmergencyChange()" class="w-full text-xs sm:text-sm font-medium border border-slate-300 rounded-xl px-3 py-2.5 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition">
+                <option value="accident" selected>💥 Severe Road Accident (Trauma, Polytrauma, Hemorrhage)</option>
+                <option value="cardiac">❤️ Acute Myocardial Infarction (Cardiac Arrest / Heart Attack)</option>
+                <option value="stroke">🧠 Acute Ischemic Stroke (Brain Attack / Paralysis)</option>
+                <option value="burn">🔥 High-Degree Industrial Burn & Smoke Inhalation</option>
+                <option value="respiratory">🫁 Acute Respiratory Failure / ARDS</option>
+              </select>
+            </div>
+
+            <!-- Triage Priority & Blood Group -->
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1.5">Triage Severity</label>
+                <select id="select-priority" onchange="runAIScoring()" class="w-full text-xs sm:text-sm border border-slate-300 rounded-xl px-3 py-2 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="critical" selected>🔴 CRITICAL (Immediate)</option>
+                  <option value="high">🟠 HIGH (Urgent)</option>
+                  <option value="moderate">🟡 MODERATE (Semi-Urgent)</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1.5">Patient Blood Group</label>
+                <select id="select-blood-group" onchange="runAIScoring()" class="w-full text-xs sm:text-sm border border-slate-300 rounded-xl px-3 py-2 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="O+" selected>O+ (Positive)</option>
+                  <option value="O-">O- (Universal)</option>
+                  <option value="A+">A+ (Positive)</option>
+                  <option value="A-">A- (Negative)</option>
+                  <option value="B+">B+ (Positive)</option>
+                  <option value="B-">B- (Negative)</option>
+                  <option value="AB+">AB+ (Positive)</option>
+                  <option value="AB-">AB- (Negative)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Dynamic Medical Requirements Toggles -->
+            <div class="space-y-2 pt-2 border-t border-slate-100">
+              <span class="block text-xs font-semibold text-slate-700">Required Critical Capabilities:</span>
+              <div class="grid grid-cols-2 gap-2 text-xs">
+                <label class="flex items-center space-x-2 p-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 cursor-pointer">
+                  <input type="checkbox" id="req-icu" checked onchange="runAIScoring()" class="rounded text-blue-600 focus:ring-blue-500">
+                  <span class="font-medium text-slate-700">ICU Bed Needed</span>
+                </label>
+                <label class="flex items-center space-x-2 p-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 cursor-pointer">
+                  <input type="checkbox" id="req-specialist" checked onchange="runAIScoring()" class="rounded text-blue-600 focus:ring-blue-500">
+                  <span class="font-medium text-slate-700" id="label-specialist">Trauma Specialist</span>
+                </label>
+                <label class="flex items-center space-x-2 p-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 cursor-pointer">
+                  <input type="checkbox" id="req-ctscan" checked onchange="runAIScoring()" class="rounded text-blue-600 focus:ring-blue-500">
+                  <span class="font-medium text-slate-700">CT Scan / MRI</span>
+                </label>
+                <label class="flex items-center space-x-2 p-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 cursor-pointer">
+                  <input type="checkbox" id="req-blood" checked onchange="runAIScoring()" class="rounded text-blue-600 focus:ring-blue-500">
+                  <span class="font-medium text-slate-700">Blood Units Ready</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Traffic & Dynamic Condition Controls -->
+            <div class="pt-2 border-t border-slate-100 space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-semibold text-slate-700">Route Traffic Congestion:</span>
+                <span id="traffic-badge" class="text-[11px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">
+                  Moderate Congestion on Route A
+                </span>
+              </div>
+              <div class="flex gap-2">
+                <button onclick="setTrafficMode('light')" class="flex-1 py-1 text-xs rounded border border-slate-200 hover:bg-slate-100 font-medium">Clear 🟢</button>
+                <button onclick="setTrafficMode('moderate')" class="flex-1 py-1 text-xs rounded border border-blue-400 bg-blue-50 text-blue-700 font-medium">Moderate 🟡</button>
+                <button onclick="setTrafficMode('heavy')" class="flex-1 py-1 text-xs rounded border border-slate-200 hover:bg-slate-100 font-medium">Heavy Traffic 🔴</button>
+              </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="pt-2 flex gap-2">
+              <button onclick="runAIScoring()" class="flex-1 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm shadow-md transition flex items-center justify-center space-x-1.5">
+                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                <span>Recalculate AI Readiness</span>
+              </button>
+              <button onclick="startAmbulanceAnimation()" class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold py-2.5 px-3 rounded-xl text-xs sm:text-sm shadow-md transition flex items-center justify-center space-x-1.5">
+                <i class="fa-solid fa-play"></i>
+                <span class="hidden sm:inline">Drive Route</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- AI Ranking Results Cards (As presented in Slide 7) -->
+          <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+            <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div class="flex items-center space-x-2">
+                <i class="fa-solid fa-square-poll-vertical text-indigo-600"></i>
+                <h3 class="font-bold text-slate-900 text-sm sm:text-base">2. AI Treatment Readiness Ranking</h3>
+              </div>
+              <span class="text-xs text-slate-500 font-medium">Formula: 7 Weighted Factors</span>
+            </div>
+
+            <!-- The Hospital Cards Container -->
+            <div id="hospital-ranking-cards" class="space-y-3">
+              <!-- Dynamically populated by JS: Hospital A, B, C -->
+            </div>
+
+            <!-- Core Insight Callout Box (Slide 7 highlight) -->
+            <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 flex items-start space-x-2.5">
+              <i class="fa-solid fa-circle-info text-blue-600 mt-0.5 text-sm flex-shrink-0"></i>
+              <div>
+                <span class="font-bold">Key Project Finding:</span>
+                <p class="mt-0.5 text-blue-800">
+                  Even if <strong>Hospital B is not the nearest</strong> (6.2 km vs 3.2 km), it is selected with a <strong class="text-emerald-700">92% score</strong> because it has on-duty specialists, available ICU beds, and matched blood, avoiding fatal secondary hospital transfers.
+                </p>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Right: Map & Live Telemetry: 7 cols -->
+        <div class="lg:col-span-7 space-y-6">
+
+          <!-- Map Container -->
+          <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col h-[520px]">
+            <!-- Map Toolbar -->
+            <div class="bg-slate-900 text-white px-4 py-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-800">
+              <div class="flex items-center space-x-2">
+                <span class="relative flex h-3 w-3">
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                </span>
+                <span class="text-xs font-bold font-mono tracking-wide">LIVE GPS RADAR & TELEMETRY</span>
+                <span class="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700">Trichy Medical District</span>
+              </div>
+
+              <!-- Map Legend Badges -->
+              <div class="flex items-center space-x-3 text-[11px]">
+                <span class="flex items-center space-x-1"><span class="w-2.5 h-2.5 rounded-full bg-red-500 inline-block"></span> <span>Ambulance</span></span>
+                <span class="flex items-center space-x-1"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span> <span>Best Hospital (B)</span></span>
+                <span class="flex items-center space-x-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span> <span>Hospital A</span></span>
+                <span class="flex items-center space-x-1"><span class="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block"></span> <span>Hospital C</span></span>
+              </div>
+            </div>
+
+            <!-- Leaflet Map Div -->
+            <div id="map" class="flex-1 w-full relative z-0"></div>
+
+            <!-- Map Floating Info Bar (Live Navigation HUD) -->
+            <div class="bg-slate-50 border-t border-slate-200 p-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
+              <div class="bg-white p-2 rounded-lg border border-slate-200/80 shadow-xs">
+                <span class="text-[10px] text-slate-500 uppercase block font-semibold">Recommended Dest</span>
+                <span id="nav-hud-destination" class="font-bold text-emerald-600 truncate block">Hospital B (92%)</span>
+              </div>
+              <div class="bg-white p-2 rounded-lg border border-slate-200/80 shadow-xs">
+                <span class="text-[10px] text-slate-500 uppercase block font-semibold">Optimized Distance</span>
+                <span id="nav-hud-distance" class="font-bold text-slate-800">6.2 km</span>
+              </div>
+              <div class="bg-white p-2 rounded-lg border border-slate-200/80 shadow-xs">
+                <span class="text-[10px] text-slate-500 uppercase block font-semibold">Live ETA</span>
+                <span id="nav-hud-eta" class="font-bold text-blue-600 font-mono text-sm">12 mins</span>
+              </div>
+              <div class="bg-white p-2 rounded-lg border border-slate-200/80 shadow-xs">
+                <span class="text-[10px] text-slate-500 uppercase block font-semibold">Traffic Status</span>
+                <span id="nav-hud-traffic" class="font-bold text-emerald-600">Green Corridor / Optimal</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Route Comparison Matrix (Traditional vs Proposed from Slide 12) -->
+          <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+            <h4 class="font-bold text-slate-900 text-sm flex items-center space-x-2">
+              <i class="fa-solid fa-code-compare text-blue-600"></i>
+              <span>Paradigm Comparison: Traditional Nearest vs AI Treatment-Ready</span>
+            </h4>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs pt-1">
+              <!-- Traditional Column -->
+              <div class="bg-rose-50/70 border border-rose-200 rounded-xl p-3.5 space-y-2">
+                <div class="flex items-center justify-between text-rose-800 font-bold">
+                  <span>❌ Traditional Ambulance System</span>
+                  <span class="bg-rose-200 text-rose-900 px-2 py-0.5 rounded text-[10px]">Distance Only</span>
+                </div>
+                <p class="text-rose-900/80">
+                  Question: <em>"Which hospital is geographically nearest?"</em>
+                </p>
+                <ul class="space-y-1 text-slate-700 list-disc list-inside">
+                  <li>Takes patient to Hospital A (3.2 km, 8 min).</li>
+                  <li class="text-red-700 font-semibold">Fails: ICU is full & neurosurgeon not available.</li>
+                  <li class="text-red-700 font-semibold">Secondary transfer needed: +25 mins wasted!</li>
+                  <li>High risk of mortality and treatment delay.</li>
+                </ul>
+              </div>
+
+              <!-- Proposed Column -->
+              <div class="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3.5 space-y-2">
+                <div class="flex items-center justify-between text-emerald-800 font-bold">
+                  <span>✅ Proposed AI-Based System</span>
+                  <span class="bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded text-[10px]">Readiness + Route</span>
+                </div>
+                <p class="text-emerald-900/80">
+                  Question: <em>"Which hospital is most ready to treat this patient?"</em>
+                </p>
+                <ul class="space-y-1 text-slate-700 list-disc list-inside">
+                  <li>Evaluates 7 factors and selects Hospital B (6.2 km, 12 min).</li>
+                  <li class="text-emerald-700 font-semibold">Instant match: ICU reserved & specialist standing by.</li>
+                  <li class="text-emerald-700 font-semibold">Hospital pre-alert dispatched while on route!</li>
+                  <li>Zero secondary transfers; immediate treatment at arrival.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- ========================================== -->
+    <!-- TAB 2: HOSPITAL PRE-ALERT HUD (From Slide 10) -->
+    <!-- ========================================== -->
+    <section id="tab-prealert" class="tab-pane hidden space-y-6">
+      
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <div class="flex items-center space-x-2">
+            <h2 class="text-lg font-bold text-slate-900">Hospital Pre-Alert Digital Reception HUD</h2>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-800 border border-red-200 animate-pulse">
+              <i class="fa-solid fa-tower-broadcast mr-1"></i> Live Radio Link
+            </span>
+          </div>
+          <p class="text-xs sm:text-sm text-slate-600 mt-1">
+            Simulates the emergency department reception screen at the selected hospital (Hospital B). Enables ER staff to prepare ICU beds, trauma teams, and CT scanners before the ambulance arrives.
+          </p>
+        </div>
+
+        <div class="flex items-center space-x-3">
+          <button onclick="toggleAudioAlert()" id="btn-audio-toggle" class="px-3.5 py-2 text-xs font-bold rounded-xl border border-slate-300 bg-slate-100 hover:bg-slate-200 text-slate-700 transition flex items-center space-x-2">
+            <i class="fa-solid fa-volume-high text-red-600" id="audio-icon"></i>
+            <span id="audio-label">Siren Audio: On</span>
+          </button>
+          <button onclick="resetPreAlertTimer()" class="px-3.5 py-2 text-xs font-bold rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition flex items-center space-x-1.5 shadow-sm">
+            <i class="fa-solid fa-rotate-right"></i>
+            <span>Reset Dispatch</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- THE HUD SCREEN (Replicating the exact Slide 10 UI) -->
+      <div class="max-w-4xl mx-auto bg-emergency-hud rounded-3xl border-2 border-red-900/60 shadow-2xl p-6 sm:p-10 font-mono text-white relative overflow-hidden">
+        <!-- Background Grid Pattern -->
+        <div class="absolute inset-0 bg-[radial-gradient(#ef4444_1px,transparent_1px)] [background-size:24px_24px] opacity-10 pointer-events-none"></div>
+
+        <!-- Top Header Status Bar -->
+        <div class="flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-red-900/40 relative z-10">
+          <div class="flex items-center space-x-3">
+            <span class="w-4 h-4 rounded-full bg-red-500 animate-ping"></span>
+            <div>
+              <span class="text-xs tracking-widest text-red-400 font-bold block uppercase">LIVE DISPATCH ALERT</span>
+              <span class="text-sm font-bold text-slate-200">KAVERI SUPER SPECIALTY - ER BAY 01</span>
+            </div>
+          </div>
+
+          <div class="flex items-center space-x-3">
+            <span class="text-xs text-slate-400 uppercase">PRIORITY LEVEL:</span>
+            <span id="hud-priority-badge" class="px-3 py-1 rounded bg-red-950/80 text-red-400 border border-red-600 text-xs font-extrabold tracking-wider animate-pulse">
+              CRITICAL
+            </span>
+          </div>
+        </div>
+
+        <!-- Big Banner Headline -->
+        <div class="py-6 sm:py-8 text-center relative z-10">
+          <h3 class="text-2xl sm:text-4xl font-extrabold tracking-wider text-red-500 flex items-center justify-center space-x-3">
+            <i class="fa-solid fa-truck-medical animate-bounce"></i>
+            <span>AMBULANCE INCOMING</span>
+          </h3>
+          <p id="hud-emergency-title" class="text-sm sm:text-base text-slate-300 mt-2 font-sans font-medium">
+            Emergency Condition: <span class="text-yellow-400 font-bold">Severe Road Accident & Polytrauma</span>
+          </p>
+        </div>
+
+        <!-- Core Telemetry Display: ETA & Blood Match -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 my-4 relative z-10">
+          <!-- Arrival Clock -->
+          <div class="bg-black/40 border border-slate-800 rounded-2xl p-5 text-center flex flex-col items-center justify-center">
+            <span class="text-xs text-slate-400 uppercase tracking-widest block mb-1">ARRIVAL ESTIMATE IN</span>
+            <div class="flex items-baseline space-x-2">
+              <span id="hud-timer-minutes" class="text-5xl sm:text-7xl font-extrabold text-cyan-400 tracking-tight font-mono">08</span>
+              <span class="text-2xl font-bold text-cyan-500">:</span>
+              <span id="hud-timer-seconds" class="text-5xl sm:text-7xl font-extrabold text-cyan-400 tracking-tight font-mono">00</span>
+              <span class="text-xs font-bold text-slate-400 tracking-wider ml-1">MIN</span>
+            </div>
+            <span class="text-[11px] text-emerald-400 mt-2 flex items-center">
+              <i class="fa-solid fa-route mr-1.5"></i> Optimal Route via Bypass Corridor
+            </span>
+          </div>
+
+          <!-- Blood Match Card -->
+          <div class="bg-black/40 border border-slate-800 rounded-2xl p-5 text-center flex flex-col items-center justify-center">
+            <span class="text-xs text-slate-400 uppercase tracking-widest block mb-1">BLOOD GROUP MATCH</span>
+            <div class="flex items-baseline space-x-2">
+              <span id="hud-blood-group" class="text-5xl sm:text-7xl font-extrabold text-emerald-400 tracking-tight font-mono">O+</span>
+            </div>
+            <span class="text-[11px] text-emerald-400 mt-2 font-bold px-2.5 py-0.5 rounded bg-emerald-950/60 border border-emerald-800">
+              <i class="fa-solid fa-check-double mr-1"></i> 6 Units Reserved in Hospital Bank
+            </span>
+          </div>
+        </div>
+
+        <!-- Resource Checklist Status (As in Slide 10) -->
+        <div class="space-y-3 mt-6 relative z-10">
+          <div class="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/60 border border-slate-800">
+            <div class="flex items-center space-x-3">
+              <i class="fa-solid fa-bed-pulse text-red-400 text-lg"></i>
+              <span class="text-sm font-semibold text-slate-200">Emergency ICU Bed</span>
+            </div>
+            <span class="px-3 py-1 rounded text-xs font-bold bg-red-950 text-red-400 border border-red-700/60">
+              REQUIRED & ALLOCATED
+            </span>
+          </div>
+
+          <div class="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/60 border border-slate-800">
+            <div class="flex items-center space-x-3">
+              <i class="fa-solid fa-microscope text-red-400 text-lg"></i>
+              <span class="text-sm font-semibold text-slate-200">Trauma CT Scan & Radiology Bay</span>
+            </div>
+            <span class="px-3 py-1 rounded text-xs font-bold bg-red-950 text-red-400 border border-red-700/60">
+              REQUIRED & PREPARED
+            </span>
+          </div>
+
+          <div class="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/60 border border-slate-800">
+            <div class="flex items-center space-x-3">
+              <i class="fa-solid fa-droplet text-emerald-400 text-lg"></i>
+              <span class="text-sm font-semibold text-slate-200">Blood Units Cross-Matching</span>
+            </div>
+            <span class="px-3 py-1 rounded text-xs font-bold bg-emerald-950 text-emerald-400 border border-emerald-700/60">
+              AVAILABLE & PRE-STAGED
+            </span>
+          </div>
+
+          <div class="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/60 border border-slate-800">
+            <div class="flex items-center space-x-3">
+              <i class="fa-solid fa-user-doctor text-cyan-400 text-lg"></i>
+              <span class="text-sm font-semibold text-slate-200">On-Duty Emergency Specialist</span>
+            </div>
+            <span class="px-3 py-1 rounded text-xs font-bold bg-cyan-950 text-cyan-400 border border-cyan-700/60">
+              DR. R. MONIKA (ON-CALL ER BAY)
+            </span>
+          </div>
+        </div>
+
+        <!-- Footer Motto from Slide 10 -->
+        <div class="mt-8 pt-6 border-t border-red-900/40 text-center relative z-10">
+          <p class="text-xs uppercase tracking-widest text-slate-400">PREPARE RESOURCES BEFORE ARRIVAL • EMS DISPATCH SYSTEM</p>
+          <p class="text-base sm:text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-red-400 via-yellow-200 to-emerald-400 mt-2 font-sans">
+            “Alert Today, Prepare Today, Save Lives Tomorrow”
+          </p>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ========================================== -->
+    <!-- TAB 3: BLOOD BANK SUPPORT NETWORK (Slide 8) -->
+    <!-- ========================================== -->
+    <section id="tab-bloodbank" class="tab-pane hidden space-y-6">
+      
+      <!-- Description Banner -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <div class="flex items-center space-x-2">
+            <h2 class="text-lg font-bold text-slate-900">Regional Blood Bank Stock & Distance Locator</h2>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-800 border border-red-200">
+              <i class="fa-solid fa-droplet mr-1"></i> Live Inventory Sync
+            </span>
+          </div>
+          <p class="text-xs sm:text-sm text-slate-600 mt-1">
+            Implements the Slide 8 workflow: Checks database units, retrieves GPS location, scans within radius, factors distance + traffic, and sorts by minimum ETA.
+          </p>
+        </div>
+
+        <!-- Blood Group Selector Buttons -->
+        <div class="flex flex-wrap gap-1.5" id="blood-filter-buttons">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <!-- Logic Workflow Diagram (As illustrated in Slide 8) -->
+      <div class="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-5 border border-slate-700 shadow-md">
+        <h3 class="text-xs font-bold uppercase tracking-wider text-blue-400 mb-3 flex items-center">
+          <i class="fa-solid fa-diagram-project mr-2"></i> Slide 8 Decision Pipeline Workflow
+        </h3>
+        <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 text-center text-xs">
+          <div class="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
+            <span class="text-red-400 font-bold block">1. Select Group</span>
+            <span class="text-[11px] text-slate-300">A+, B+, O+, AB+...</span>
+          </div>
+          <div class="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
+            <span class="text-red-400 font-bold block">2. Check Stock</span>
+            <span class="text-[11px] text-slate-300">Query Database</span>
+          </div>
+          <div class="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
+            <span class="text-blue-400 font-bold block">3. User Location</span>
+            <span class="text-[11px] text-slate-300">Ambulance GPS</span>
+          </div>
+          <div class="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
+            <span class="text-blue-400 font-bold block">4. Radius Scan</span>
+            <span class="text-[11px] text-slate-300">Search Nearby</span>
+          </div>
+          <div class="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
+            <span class="text-emerald-400 font-bold block">5. Distance & Traffic</span>
+            <span class="text-[11px] text-slate-300">Real-Time Routing</span>
+          </div>
+          <div class="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
+            <span class="text-emerald-400 font-bold block">6. Sort by ETA</span>
+            <span class="text-[11px] text-slate-300">Minimum Travel Time</span>
+          </div>
+          <div class="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
+            <span class="text-yellow-400 font-bold block">7. Dispatch Alert</span>
+            <span class="text-[11px] text-slate-300">Reserve Units</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Blood Banks Table & Cards -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="p-4 border-b border-slate-100 flex items-center justify-between">
+          <h3 class="font-bold text-slate-900 text-sm sm:text-base flex items-center space-x-2">
+            <i class="fa-solid fa-hospital-user text-red-600"></i>
+            <span>Verified Blood Banks (Sorted by AI Travel Time)</span>
+          </h3>
+          <span class="text-xs text-slate-500" id="blood-bank-count-label">Showing 4 Facilities</span>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs sm:text-sm">
+            <thead class="bg-slate-50 text-slate-600 font-semibold uppercase text-[11px] border-b border-slate-200">
+              <tr>
+                <th class="py-3 px-4">Blood Bank Facility</th>
+                <th class="py-3 px-4">Selected Group (<span id="table-selected-group" class="text-red-600 font-bold">O+</span>)</th>
+                <th class="py-3 px-4">Distance</th>
+                <th class="py-3 px-4">Traffic & ETA</th>
+                <th class="py-3 px-4">Status & Reservation</th>
+              </tr>
+            </thead>
+            <tbody id="blood-bank-tbody" class="divide-y divide-slate-100">
+              <!-- Dynamically populated by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ========================================== -->
+    <!-- TAB 4: AI SCORING MODEL (Slide 6 & 7) -->
+    <!-- ========================================== -->
+    <section id="tab-scoring" class="tab-pane hidden space-y-6">
+      
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+        <div class="flex items-center space-x-2">
+          <h2 class="text-lg font-bold text-slate-900">AI Treatment Readiness Scoring Model (100% Weight Matrix)</h2>
+          <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
+            Slide 7 Formulation
+          </span>
+        </div>
+        <p class="text-xs sm:text-sm text-slate-600 mt-1">
+          Adjust the weights below to see how the mathematical multi-criteria decision ranking dynamically evaluates and selects the optimal hospital.
+        </p>
+      </div>
+
+      <!-- Weights Interactive Sliders Grid -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        
+        <!-- Weight 1: Facility Match -->
+        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-2">
+          <div class="flex justify-between items-center text-xs font-bold text-slate-800">
+            <span>Medical Facility Match</span>
+            <span id="val-w-facility" class="text-blue-600 font-mono text-sm">25%</span>
+          </div>
+          <input type="range" id="slider-w-facility" min="5" max="50" value="25" oninput="updateWeight('facility', this.value)" class="w-full accent-blue-600 cursor-pointer">
+          <p class="text-[11px] text-slate-500">Matching patient condition with hospital capabilities.</p>
+        </div>
+
+        <!-- Weight 2: Bed Availability -->
+        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-2">
+          <div class="flex justify-between items-center text-xs font-bold text-slate-800">
+            <span>Bed Availability</span>
+            <span id="val-w-bed" class="text-blue-600 font-mono text-sm">20%</span>
+          </div>
+          <input type="range" id="slider-w-bed" min="5" max="50" value="20" oninput="updateWeight('bed', this.value)" class="w-full accent-blue-600 cursor-pointer">
+          <p class="text-[11px] text-slate-500">ICU, Emergency, and General bed availability.</p>
+        </div>
+
+        <!-- Weight 3: Specialist Availability -->
+        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-2">
+          <div class="flex justify-between items-center text-xs font-bold text-slate-800">
+            <span>Specialist Availability</span>
+            <span id="val-w-specialist" class="text-blue-600 font-mono text-sm">15%</span>
+          </div>
+          <input type="range" id="slider-w-specialist" min="5" max="40" value="15" oninput="updateWeight('specialist', this.value)" class="w-full accent-blue-600 cursor-pointer">
+          <p class="text-[11px] text-slate-500">Cardiologist, Neurosurgeon, Trauma specialist on duty.</p>
+        </div>
+
+        <!-- Weight 4: Equipment Availability -->
+        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-2">
+          <div class="flex justify-between items-center text-xs font-bold text-slate-800">
+            <span>Equipment Availability</span>
+            <span id="val-w-equipment" class="text-blue-600 font-mono text-sm">15%</span>
+          </div>
+          <input type="range" id="slider-w-equipment" min="5" max="40" value="15" oninput="updateWeight('equipment', this.value)" class="w-full accent-blue-600 cursor-pointer">
+          <p class="text-[11px] text-slate-500">Ventilator, CT Scan, Cath Lab, MRI availability.</p>
+        </div>
+
+        <!-- Weight 5: Blood Availability -->
+        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-2">
+          <div class="flex justify-between items-center text-xs font-bold text-slate-800">
+            <span>Blood Availability</span>
+            <span id="val-w-blood" class="text-blue-600 font-mono text-sm">10%</span>
+          </div>
+          <input type="range" id="slider-w-blood" min="0" max="30" value="10" oninput="updateWeight('blood', this.value)" class="w-full accent-blue-600 cursor-pointer">
+          <p class="text-[11px] text-slate-500">Availability of matching units for patient blood group.</p>
+        </div>
+
+        <!-- Weight 6: Travel Time -->
+        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-2">
+          <div class="flex justify-between items-center text-xs font-bold text-slate-800">
+            <span>Travel Time</span>
+            <span id="val-w-travel" class="text-blue-600 font-mono text-sm">10%</span>
+          </div>
+          <input type="range" id="slider-w-travel" min="0" max="30" value="10" oninput="updateWeight('travel', this.value)" class="w-full accent-blue-600 cursor-pointer">
+          <p class="text-[11px] text-slate-500">Estimated transit time to reach the hospital.</p>
+        </div>
+
+        <!-- Weight 7: Traffic Condition -->
+        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-2">
+          <div class="flex justify-between items-center text-xs font-bold text-slate-800">
+            <span>Traffic Condition</span>
+            <span id="val-w-traffic" class="text-blue-600 font-mono text-sm">5%</span>
+          </div>
+          <input type="range" id="slider-w-traffic" min="0" max="25" value="5" oninput="updateWeight('traffic', this.value)" class="w-full accent-blue-600 cursor-pointer">
+          <p class="text-[11px] text-slate-500">Live congestion impact along the navigation corridor.</p>
+        </div>
+
+        <!-- Total Weight Summary Box -->
+        <div class="bg-gradient-to-br from-slate-900 to-indigo-950 text-white p-4 rounded-2xl border border-slate-800 shadow-sm flex flex-col justify-between">
+          <div>
+            <span class="text-xs uppercase text-slate-400 font-bold block">Current Total Weight</span>
+            <span id="total-weight-sum" class="text-3xl font-extrabold text-emerald-400 font-mono">100%</span>
+          </div>
+          <button onclick="resetDefaultWeights()" class="mt-3 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 py-1.5 px-3 rounded-lg border border-slate-700 transition">
+            Reset to Slide 7 Defaults
+          </button>
+        </div>
+
+      </div>
+
+      <!-- Live Calculation Breakdown Table -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+        <h3 class="font-bold text-slate-900 text-sm sm:text-base flex items-center space-x-2">
+          <i class="fa-solid fa-calculator text-blue-600"></i>
+          <span>Multi-Criteria Scoring Computation Table</span>
+        </h3>
+        
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs sm:text-sm">
+            <thead class="bg-slate-50 text-slate-600 font-semibold uppercase text-[11px] border-b border-slate-200">
+              <tr>
+                <th class="py-3 px-4">Hospital Name</th>
+                <th class="py-3 px-4">Distance</th>
+                <th class="py-3 px-4">Travel Time</th>
+                <th class="py-3 px-4">Facility Match (25%)</th>
+                <th class="py-3 px-4">Bed Avail (20%)</th>
+                <th class="py-3 px-4">Specialist (15%)</th>
+                <th class="py-3 px-4">Equipment (15%)</th>
+                <th class="py-3 px-4">Final Score</th>
+                <th class="py-3 px-4">Status</th>
+              </tr>
+            </thead>
+            <tbody id="detailed-score-breakdown-tbody" class="divide-y divide-slate-100">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ========================================== -->
+    <!-- TAB 5: PRESENTATION SLIDES & PROJECT TEAM -->
+    <!-- ========================================== -->
+    <section id="tab-presentation" class="tab-pane hidden space-y-6">
+      
+      <!-- Academic Information Card -->
+      <div class="bg-gradient-to-r from-blue-900 to-indigo-900 text-white rounded-2xl p-6 sm:p-8 shadow-md relative overflow-hidden">
+        <div class="relative z-10 space-y-4">
+          <div class="inline-block bg-blue-800/80 px-3 py-1 rounded-full text-xs font-semibold text-blue-200 border border-blue-700">
+            J.J. College of Engineering and Technology • Sowdambikaa Group of Institutions
+          </div>
+          <h2 class="text-2xl sm:text-4xl font-extrabold tracking-tight">
+            Smart Ambulance Routing
+          </h2>
+          <p class="text-sm sm:text-base text-blue-100 max-w-3xl">
+            AI-Based Smart Emergency Ambulance Routing and Treatment-Ready Hospital Selection System.
+          </p>
+          
+          <div class="pt-4 border-t border-blue-800/60 flex flex-wrap gap-6 text-xs sm:text-sm">
+            <div>
+              <span class="text-blue-300 block text-xs uppercase font-semibold">Presented By:</span>
+              <p class="font-bold text-white text-base">Monika.R.K • Sahana.S • Rubini.P • Nigidha.B</p>
+            </div>
+            <div>
+              <span class="text-blue-300 block text-xs uppercase font-semibold">Academic Accreditation:</span>
+              <p class="font-bold text-white">Approved by AICTE | Affiliated to Anna University | ISO 9001:2008</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Project Modules Grid (Covering Slides 2, 4, 11, 12, 13) -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+        <!-- Slide 2: Abstract -->
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+          <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+            01
+          </div>
+          <h3 class="font-bold text-slate-900 text-base">Abstract</h3>
+          <p class="text-xs text-slate-600 leading-relaxed">
+            Quick ambulance response is essential, but the nearest hospital may lack required facilities. Our AI selects the best hospital based on patient condition, beds, specialists, equipment, blood, and traffic to minimize treatment delays and hospital transfers.
+          </p>
+        </div>
+
+        <!-- Slide 4: Problem Statement -->
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+          <div class="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold">
+            02
+          </div>
+          <h3 class="font-bold text-slate-900 text-base">Problem Statement</h3>
+          <p class="text-xs text-slate-600 leading-relaxed">
+            Hospitals frequently lack ICU/emergency beds, required specialists, equipment (e.g. CT scan), or blood matching the patient's group. Relying on distance alone results in treatment delays and dangerous inter-hospital transfers.
+          </p>
+        </div>
+
+        <!-- Slide 11: Technology Stack -->
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+          <div class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
+            03
+          </div>
+          <h3 class="font-bold text-slate-900 text-base">Technology Stack</h3>
+          <ul class="text-xs text-slate-600 space-y-1.5">
+            <li><strong class="text-slate-800">Frontend:</strong> HTML5, CSS3, JavaScript, Tailwind</li>
+            <li><strong class="text-slate-800">AI/ML:</strong> Python, Scikit-learn, Ranking Model</li>
+            <li><strong class="text-slate-800">Maps & Routing:</strong> OpenStreetMap, Leaflet.js</li>
+            <li><strong class="text-slate-800">Deployment:</strong> Cloud Native / Render.com</li>
+          </ul>
+        </div>
+
+        <!-- Slide 12: Expected Results -->
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+          <div class="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
+            04
+          </div>
+          <h3 class="font-bold text-slate-900 text-base">Expected Results</h3>
+          <p class="text-xs text-slate-600 leading-relaxed">
+            Substantially reduced treatment delays, 100% facility readiness upon arrival, traffic-aware real-time dynamic re-routing, eliminated secondary transfers, and seamless ambulance-to-hospital coordination.
+          </p>
+        </div>
+
+        <!-- Slide 13: Future Scope -->
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+          <div class="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
+            05
+          </div>
+          <h3 class="font-bold text-slate-900 text-base">Future Scope</h3>
+          <p class="text-xs text-slate-600 leading-relaxed">
+            Integration with government emergency services, green-light traffic signal preemption (Green Corridor), predictive bed availability via time-series forecasting, and voice assistance for paramedics.
+          </p>
+        </div>
+
+        <!-- Slide 14: Core Novelty -->
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+          <div class="w-10 h-10 rounded-xl bg-cyan-50 text-cyan-600 flex items-center justify-center font-bold">
+            06
+          </div>
+          <h3 class="font-bold text-slate-900 text-base">Core Novelty</h3>
+          <p class="text-xs text-slate-600 leading-relaxed">
+            “Patient-specific Treatment Readiness Score-based Hospital Selection with Real-Time Traffic, Medical Resource, Bed, and Blood Availability.”
+          </p>
+        </div>
+
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="bg-white border-t border-slate-200 py-6 mt-12 text-slate-500 text-xs text-center space-y-2">
+    <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div>
+        <p class="font-semibold text-slate-800">Smart Ambulance Routing System &copy; 2026</p>
+        <p>J.J. College of Engineering and Technology (Sowdambikaa Group of Institutions)</p>
+      </div>
+      <div class="flex items-center space-x-4">
+        <span>Team: Monika.R.K • Sahana.S • Rubini.P • Nigidha.B</span>
+      </div>
+      <div>
+        <a href="https://render.com" target="_blank" rel="noopener noreferrer" class="inline-flex items-center space-x-1 text-blue-600 hover:text-blue-800 font-medium">
+          <i class="fa-solid fa-cloud-arrow-up"></i>
+          <span>Ready for Render.com Deployment</span>
+        </a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  
+  <!-- Canvas Confetti CDN (For celebratory simulation) -->
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+
+  <!-- Application JS -->
+  <script src="app.js"></script>
+</body>
+</html>
