@@ -283,9 +283,9 @@
                 <i class="fa-solid fa-wand-magic-sparkles"></i>
                 <span>Recalculate AI Readiness</span>
               </button>
-              <button onclick="startAmbulanceAnimation()" class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold py-2.5 px-3 rounded-xl text-xs sm:text-sm shadow-md transition flex items-center justify-center space-x-1.5">
+              <button id="btn-start-emergency" onclick="startEmergency()" class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold py-2.5 px-3.5 rounded-xl text-xs sm:text-sm shadow-md transition flex items-center justify-center space-x-1.5 shadow-emerald-500/25">
                 <i class="fa-solid fa-play"></i>
-                <span class="hidden sm:inline">Drive Route</span>
+                <span>Start Emergency</span>
               </button>
             </div>
           </div>
@@ -344,6 +344,21 @@
               </div>
             </div>
 
+            <!-- Interactive Route Selection Status Bar -->
+            <div id="route-selection-status-bar" class="bg-slate-800 text-slate-200 px-4 py-2 text-xs flex flex-wrap items-center justify-between gap-2 border-b border-slate-700/80">
+              <div class="flex items-center space-x-2">
+                <span class="text-slate-400 font-semibold"><i class="fa-solid fa-route mr-1.5 text-blue-400"></i>Active Route:</span>
+                <span id="route-selection-status" class="font-bold text-emerald-400">Hospital B (AI Selected)</span>
+              </div>
+              <div class="flex items-center space-x-2">
+                <span id="route-routing-api-status" class="text-[10px] px-2 py-0.5 rounded bg-slate-700 text-emerald-400 font-mono flex items-center">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span>
+                  <span>OSRM Dynamic Routing</span>
+                </span>
+                <button onclick="clearRouteSelection()" title="Reset route selection" class="text-[10px] text-slate-400 hover:text-white underline ml-1">Reset</button>
+              </div>
+            </div>
+
             <!-- Leaflet Map Div -->
             <div id="map" class="flex-1 w-full relative z-0"></div>
 
@@ -355,11 +370,11 @@
               </div>
               <div class="bg-white p-2 rounded-lg border border-slate-200/80 shadow-xs">
                 <span class="text-[10px] text-slate-500 uppercase block font-semibold">Optimized Distance</span>
-                <span id="nav-hud-distance" class="font-bold text-slate-800">6.2 km</span>
+                <span id="nav-hud-distance" class="font-bold text-slate-800">Calculating...</span>
               </div>
               <div class="bg-white p-2 rounded-lg border border-slate-200/80 shadow-xs">
                 <span class="text-[10px] text-slate-500 uppercase block font-semibold">Live ETA</span>
-                <span id="nav-hud-eta" class="font-bold text-blue-600 font-mono text-sm">12 mins</span>
+                <span id="nav-hud-eta" class="font-bold text-blue-600 font-mono text-sm">Calculating...</span>
               </div>
               <div class="bg-white p-2 rounded-lg border border-slate-200/80 shadow-xs">
                 <span class="text-[10px] text-slate-500 uppercase block font-semibold">Traffic Status</span>

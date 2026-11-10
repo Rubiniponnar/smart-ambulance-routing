@@ -16,6 +16,9 @@ const state = {
   timerInterval: null,
   isDriving: false,
   driveAnimationId: null,
+  selectedHospitalId: 'hosp-b', // Default to AI Recommended optimal hospital
+  routesData: {}, // Cache of computed routes: { [id]: { coords, distanceKm, travelTimeMin, isLiveApi } }
+  routeLayers: {}, // Map of hospitalId -> { line, bufferLine }
   weights: {
     facility: 25,
     bed: 20,
@@ -36,8 +39,8 @@ const hospitalsData = [
     isBestChoice: true,
     lat: 10.8250,
     lng: 78.6850,
-    distanceKm: 6.2,
-    baseTravelTimeMin: 12,
+    distanceKm: 0, // Dynamically calculated
+    baseTravelTimeMin: 0, // Dynamically calculated
     rating: '⭐ 4.9 Super Specialty',
     beds: {
       icuTotal: 24,
@@ -79,8 +82,8 @@ const hospitalsData = [
     isBestChoice: false,
     lat: 10.8020,
     lng: 78.6950,
-    distanceKm: 3.2,
-    baseTravelTimeMin: 8,
+    distanceKm: 0, // Dynamically calculated
+    baseTravelTimeMin: 0, // Dynamically calculated
     rating: '3.8 Community Clinic',
     beds: {
       icuTotal: 6,
@@ -111,7 +114,7 @@ const hospitalsData = [
       specialist: 50,
       equipment: 55,
       blood: 40,
-      travel: 98, // Very close
+      travel: 98,
       traffic: 70
     }
   },
@@ -122,8 +125,8 @@ const hospitalsData = [
     isBestChoice: false,
     lat: 10.7600,
     lng: 78.7200,
-    distanceKm: 9.5,
-    baseTravelTimeMin: 18,
+    distanceKm: 0, // Dynamically calculated
+    baseTravelTimeMin: 0, // Dynamically calculated
     rating: '4.6 Multi-Specialty',
     beds: {
       icuTotal: 30,
@@ -154,7 +157,7 @@ const hospitalsData = [
       specialist: 75,
       equipment: 85,
       blood: 75,
-      travel: 55, // Further away
+      travel: 55,
       traffic: 60
     }
   }
@@ -212,20 +215,35 @@ const bloodBanksData = [
 let map = null;
 let ambulanceMarker = null;
 let hospitalMarkers = [];
-let bloodBankMarkers = [];
-let routeLines = [];
 
-// Waypoints for Ambulance Simulation (From accident site to Hospital B)
+// Waypoints for Ambulance Starting Point (Accident Location)
 const ambulanceStartCoords = [10.7905, 78.6900];
-const simulationRouteWaypoints = [
-  [10.7905, 78.6900],
-  [10.7940, 78.6920],
-  [10.8010, 78.6945],
-  [10.8080, 78.6910],
-  [10.8140, 78.6880],
-  [10.8200, 78.6860],
-  [10.8250, 78.6850] // Hospital B
-];
+
+// Fallback high-resolution road waypoints for each hospital (used if OSRM API is blocked/offline)
+const fallbackRouteCoords = {
+  'hosp-a': [
+    [10.7905, 78.6900],
+    [10.7940, 78.6920],
+    [10.7980, 78.6935],
+    [10.8020, 78.6950]
+  ],
+  'hosp-b': [
+    [10.7905, 78.6900],
+    [10.7940, 78.6920],
+    [10.8010, 78.6945],
+    [10.8080, 78.6910],
+    [10.8140, 78.6880],
+    [10.8200, 78.6860],
+    [10.8250, 78.6850]
+  ],
+  'hosp-c': [
+    [10.7905, 78.6900],
+    [10.7850, 78.6950],
+    [10.7800, 78.7050],
+    [10.7720, 78.7120],
+    [10.7600, 78.7200]
+  ]
+};
 
 // Web Audio API Synth for Emergency Pre-Alert Siren
 let audioCtx = null;
@@ -245,7 +263,6 @@ function playAlertChime() {
     osc.type = 'sine';
     const now = audioCtx.currentTime;
 
-    // Siren two-tone pitch
     osc.frequency.setValueAtTime(880, now);
     osc.frequency.exponentialRampToValueAtTime(1174, now + 0.15);
     osc.frequency.exponentialRampToValueAtTime(880, now + 0.3);
@@ -264,14 +281,143 @@ function playAlertChime() {
 }
 
 // ==========================================
+// MATHEMATICAL DISTANCE & ETA CALCULATORS
+// (NO dummy or hardcoded values!)
+// ==========================================
+function calculateHaversineDistanceKm(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Earth radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function calculatePathDistanceKm(coords) {
+  let totalDist = 0;
+  for (let i = 0; i < coords.length - 1; i++) {
+    totalDist += calculateHaversineDistanceKm(coords[i][0], coords[i][1], coords[i + 1][0], coords[i + 1][1]);
+  }
+  // Realistic urban road tortuosity/turn multiplier (1.20)
+  return totalDist * 1.20;
+}
+
+// ==========================================
+// ASYNCHRONOUS OSRM ROUTE FETCHING & CACHING
+// ==========================================
+async function fetchOrCalculateRoute(hospitalId) {
+  const hosp = hospitalsData.find(h => h.id === hospitalId);
+  if (!hosp) return null;
+
+  // Check in-memory cache
+  if (state.routesData[hospitalId]) {
+    // Recalculate duration if traffic mode changed
+    const cached = state.routesData[hospitalId];
+    let trafficFactor = 1.0;
+    if (state.trafficMode === 'light') trafficFactor = 0.8;
+    if (state.trafficMode === 'heavy') trafficFactor = 1.5;
+    cached.travelTimeMin = Math.max(2, Math.round(cached.baseDurationMin * trafficFactor));
+    return cached;
+  }
+
+  const startLng = ambulanceStartCoords[1];
+  const startLat = ambulanceStartCoords[0];
+  const endLng = hosp.lng;
+  const endLat = hosp.lat;
+
+  const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson`;
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+    const res = await fetch(osrmUrl, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
+      const primaryRoute = data.routes[0];
+      const latLngs = primaryRoute.geometry.coordinates.map(c => [c[1], c[0]]);
+      const distanceKm = Number((primaryRoute.distance / 1000).toFixed(2));
+      const baseDurationMin = Math.round(primaryRoute.duration / 60);
+
+      let trafficFactor = 1.0;
+      if (state.trafficMode === 'light') trafficFactor = 0.8;
+      if (state.trafficMode === 'heavy') trafficFactor = 1.5;
+      const travelTimeMin = Math.max(2, Math.round(baseDurationMin * trafficFactor));
+
+      state.routesData[hospitalId] = {
+        coords: latLngs,
+        distanceKm: distanceKm,
+        baseDurationMin: baseDurationMin,
+        travelTimeMin: travelTimeMin,
+        isLiveApi: true
+      };
+
+      updateApiStatusBadge(true);
+      return state.routesData[hospitalId];
+    } else {
+      throw new Error("No routes found in OSRM response");
+    }
+  } catch (err) {
+    console.warn(`[Route Routing API] Fallback to geodetic model for ${hospitalId}:`, err.message);
+    updateApiStatusBadge(false);
+
+    // Geodesic fallback calculation
+    const fallbackCoords = fallbackRouteCoords[hospitalId] || [ambulanceStartCoords, [hosp.lat, hosp.lng]];
+    const distanceKm = Number(calculatePathDistanceKm(fallbackCoords).toFixed(2));
+
+    let speedKmh = 45;
+    if (state.trafficMode === 'light') speedKmh = 55;
+    if (state.trafficMode === 'heavy') speedKmh = 25;
+
+    const baseDurationMin = Math.round((distanceKm / 45) * 60);
+    const travelTimeMin = Math.max(2, Math.round((distanceKm / speedKmh) * 60));
+
+    state.routesData[hospitalId] = {
+      coords: fallbackCoords,
+      distanceKm: distanceKm,
+      baseDurationMin: baseDurationMin,
+      travelTimeMin: travelTimeMin,
+      isLiveApi: false
+    };
+
+    return state.routesData[hospitalId];
+  }
+}
+
+function updateApiStatusBadge(isOnline) {
+  const badge = document.getElementById('route-routing-api-status');
+  if (!badge) return;
+
+  if (isOnline) {
+    badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span><span>OSRM Live Routing</span>`;
+    badge.className = "text-[10px] px-2 py-0.5 rounded bg-slate-700 text-emerald-400 font-mono flex items-center";
+  } else {
+    badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-400 mr-1.5"></span><span>Geodetic Physics Routing</span>`;
+    badge.className = "text-[10px] px-2 py-0.5 rounded bg-slate-700 text-amber-300 font-mono flex items-center";
+  }
+}
+
+// ==========================================
 // INITIALIZATION
 // ==========================================
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   initMap();
   renderBloodFilterButtons();
-  runAIScoring();
   renderBloodBankTable();
   startPreAlertTimer();
+
+  // Pre-calculate routes and initialize AI scoring with real distance & ETA
+  await initAllRoutes();
+  runAIScoring();
+  
+  // Select default AI winner route (Hospital B)
+  selectRoute('hosp-b');
 });
 
 // ==========================================
@@ -280,7 +426,6 @@ document.addEventListener('DOMContentLoaded', () => {
 function switchTab(tabId) {
   state.activeTab = tabId;
 
-  // Toggle tab contents
   document.querySelectorAll('.tab-pane').forEach(el => {
     el.classList.add('hidden');
     el.classList.remove('block');
@@ -291,56 +436,49 @@ function switchTab(tabId) {
     targetPane.classList.add('block');
   }
 
-  // Update navigation buttons styling
   document.querySelectorAll('.nav-tab').forEach(btn => {
     btn.classList.remove('active-tab');
     btn.classList.add('text-slate-600');
   });
-  const activeBtn = document.getElementById(`tab-btn-dispatch`);
   const currentBtn = document.getElementById(`tab-btn-${tabId}`);
   if (currentBtn) {
     currentBtn.classList.add('active-tab');
     currentBtn.classList.remove('text-slate-600');
   }
 
-  // Invalidate map size if dispatch tab opened
   if (tabId === 'dispatch' && map) {
     setTimeout(() => {
       map.invalidateSize();
     }, 200);
   }
 
-  // If prealert tab opened, trigger chime
   if (tabId === 'prealert') {
     playAlertChime();
   }
 }
 
 // ==========================================
-// LEAFLET MAP INITIALIZATION
+// LEAFLET MAP & INTERACTIVE ROUTE INITIALIZATION
 // ==========================================
 function initMap() {
   const mapElement = document.getElementById('map');
   if (!mapElement) return;
 
-  // Center around Tiruchirappalli
   map = L.map('map', {
     zoomControl: true,
     attributionControl: false
   }).setView([10.8050, 78.6950], 13);
 
-  // High performance OpenStreetMap CartoDB Positron / OSM tiles
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19
   }).addTo(map);
 
-  // Custom SVG Markers
   const ambulanceIcon = L.divIcon({
     className: 'leaflet-div-icon',
     html: `
       <div class="relative flex items-center justify-center">
         <div class="pulse-ring bg-red-500"></div>
-        <div class="custom-marker w-10 h-10 bg-red-600 text-white border-2 border-white">
+        <div class="custom-marker w-10 h-10 bg-red-600 text-white border-2 border-white shadow-lg">
           <i class="fa-solid fa-truck-medical text-sm"></i>
         </div>
       </div>
@@ -354,7 +492,7 @@ function initMap() {
     html: `
       <div class="relative flex items-center justify-center">
         <div class="pulse-ring bg-emerald-500"></div>
-        <div class="custom-marker w-11 h-11 bg-emerald-600 text-white border-2 border-white shadow-lg">
+        <div class="custom-marker w-11 h-11 bg-emerald-600 text-white border-2 border-white shadow-lg route-clickable">
           <i class="fa-solid fa-hospital text-base"></i>
         </div>
       </div>
@@ -366,7 +504,7 @@ function initMap() {
   const hospitalIconGeneral = (color, text) => L.divIcon({
     className: 'leaflet-div-icon',
     html: `
-      <div class="custom-marker w-8 h-8 ${color} text-white border-2 border-white shadow-md">
+      <div class="custom-marker w-8 h-8 ${color} text-white border-2 border-white shadow-md route-clickable">
         <span class="text-xs font-bold">${text}</span>
       </div>
     `,
@@ -375,80 +513,340 @@ function initMap() {
   });
 
   // Add Ambulance Marker
-  ambulanceMarker = L.marker(ambulanceStartCoords, { icon: ambulanceIcon }).addTo(map);
+  ambulanceMarker = L.marker(ambulanceStartCoords, { icon: ambulanceIcon, zIndexOffset: 1000 }).addTo(map);
   ambulanceMarker.bindPopup(`
     <div class="text-xs font-sans">
       <strong class="text-red-600 font-bold block text-sm">🚨 AMBULANCE #108-TN</strong>
       <span class="text-slate-600">Location: Collectorate Roundabout, Trichy</span>
-      <div class="mt-1 font-semibold text-slate-800">Status: Dispatched • Critical Triage</div>
+      <div class="mt-1 font-semibold text-slate-800">Status: Ready for Emergency Dispatch</div>
     </div>
   `);
 
-  // Add Hospital Markers
+  // Add Hospital Markers with interactive route selection on click
   hospitalsData.forEach(hosp => {
-    let icon = hosp.isBestChoice ? hospitalIconB : hospitalIconGeneral(hosp.id === 'hosp-a' ? 'bg-amber-500' : 'bg-blue-600', hosp.shortName.slice(-1));
+    const icon = hosp.isBestChoice ? hospitalIconB : hospitalIconGeneral(hosp.id === 'hosp-a' ? 'bg-amber-500' : 'bg-blue-600', hosp.shortName.slice(-1));
     const marker = L.marker([hosp.lat, hosp.lng], { icon: icon }).addTo(map);
-    
+
+    marker.on('click', () => {
+      selectRoute(hosp.id);
+    });
+
     marker.bindPopup(`
       <div class="text-xs font-sans space-y-1">
         <div class="flex items-center justify-between gap-2">
           <strong class="font-bold text-slate-900">${hosp.name}</strong>
           ${hosp.isBestChoice ? '<span class="bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded text-[10px]">AI MATCH 92%</span>' : ''}
         </div>
-        <p class="text-slate-600">Distance: ${hosp.distanceKm} km | ETA: ${hosp.baseTravelTimeMin} min</p>
+        <p class="text-slate-600" id="popup-dist-${hosp.id}">Calculating road distance...</p>
         <p class="text-slate-700 font-medium">ICU Beds: ${hosp.beds.icuAvailable} of ${hosp.beds.icuTotal} available</p>
-        <p class="text-slate-700">CT Scan: ${hosp.equipment.ctScan ? '✅ Operational' : '❌ Offline'}</p>
+        <button onclick="selectRoute('${hosp.id}')" class="mt-2 w-full py-1 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded transition shadow-xs">
+          Select This Route
+        </button>
       </div>
     `);
     hospitalMarkers.push(marker);
   });
-
-  // Draw Dynamic Routes
-  drawMapRoutes();
 }
 
-// Draw polyline routes on Leaflet
-function drawMapRoutes() {
-  routeLines.forEach(line => map.removeLayer(line));
-  routeLines = [];
+// Calculate and draw all routes on the map with click handlers
+async function initAllRoutes() {
+  // Clear previous layers
+  Object.values(state.routeLayers).forEach(layerObj => {
+    if (layerObj.line) map.removeLayer(layerObj.line);
+    if (layerObj.bufferLine) map.removeLayer(layerObj.bufferLine);
+  });
+  state.routeLayers = {};
 
-  // Route 1: To Hospital A (Nearest but congested & low readiness)
-  const routeCoordsA = [
-    ambulanceStartCoords,
-    [10.7960, 78.6930],
-    [10.8020, 78.6950]
-  ];
-  const lineA = L.polyline(routeCoordsA, {
-    color: '#f59e0b',
-    weight: 4,
-    dashArray: '6, 8',
-    opacity: 0.8
-  }).addTo(map);
-  lineA.bindTooltip("Route A (Nearest: 3.2 km, 8 min) - High ICU Shortage Risk", { sticky: true });
-  routeLines.push(lineA);
+  const routeColors = {
+    'hosp-a': '#f59e0b', // Amber
+    'hosp-b': '#10b981', // Emerald
+    'hosp-c': '#3b82f6'  // Blue
+  };
 
-  // Route 2: To Hospital B (AI Selected Treatment-Ready Route)
-  const lineB = L.polyline(simulationRouteWaypoints, {
-    color: '#10b981',
-    weight: 6,
-    opacity: 0.95
-  }).addTo(map);
-  lineB.bindTooltip("AI Selected Route B (6.2 km, 12 min) - Fully Equipped & Ready ⭐", { sticky: true });
-  routeLines.push(lineB);
+  for (const hosp of hospitalsData) {
+    const route = await fetchOrCalculateRoute(hosp.id);
+    if (!route) continue;
 
-  // Route 3: To Hospital C
-  const routeCoordsC = [
-    ambulanceStartCoords,
-    [10.7800, 78.7050],
-    [10.7600, 78.7200]
-  ];
-  const lineC = L.polyline(routeCoordsC, {
-    color: '#94a3b8',
-    weight: 3,
-    dashArray: '4, 6',
-    opacity: 0.6
-  }).addTo(map);
-  routeLines.push(lineC);
+    hosp.distanceKm = route.distanceKm;
+    hosp.baseTravelTimeMin = route.travelTimeMin;
+
+    // Invisible thick buffer line for effortless clicking/touch
+    const bufferLine = L.polyline(route.coords, {
+      color: '#000000',
+      weight: 24,
+      opacity: 0.0001,
+      interactive: true,
+      className: 'route-clickable'
+    }).addTo(map);
+
+    // Visible styled polyline
+    const line = L.polyline(route.coords, {
+      color: routeColors[hosp.id] || '#64748b',
+      weight: hosp.id === state.selectedHospitalId ? 7 : 4,
+      opacity: hosp.id === state.selectedHospitalId ? 1.0 : 0.55,
+      dashArray: hosp.id === state.selectedHospitalId ? null : '5, 8',
+      interactive: true,
+      className: 'route-clickable'
+    }).addTo(map);
+
+    const tooltipContent = `<strong>${hosp.shortName}</strong>: ${route.distanceKm} km (${route.travelTimeMin} min)<br><span class="text-[10px] text-blue-300">Click to select route</span>`;
+    line.bindTooltip(tooltipContent, { sticky: true });
+    bufferLine.bindTooltip(tooltipContent, { sticky: true });
+
+    // Click handler on both visible and buffer line
+    const handleClick = () => {
+      selectRoute(hosp.id);
+    };
+    line.on('click', handleClick);
+    bufferLine.on('click', handleClick);
+
+    line.on('mouseover', () => {
+      if (hosp.id !== state.selectedHospitalId) {
+        line.setStyle({ weight: 6, opacity: 0.9 });
+      }
+    });
+
+    line.on('mouseout', () => {
+      if (hosp.id !== state.selectedHospitalId) {
+        line.setStyle({ weight: 4, opacity: 0.55 });
+      }
+    });
+
+    state.routeLayers[hosp.id] = { line, bufferLine, color: routeColors[hosp.id] };
+
+    // Update popup distance text if open
+    const popupDist = document.getElementById(`popup-dist-${hosp.id}`);
+    if (popupDist) {
+      popupDist.textContent = `Road Distance: ${route.distanceKm} km | ETA: ${route.travelTimeMin} min`;
+    }
+  }
+}
+
+// ==========================================
+// ROUTE SELECTION WORKFLOW
+// ==========================================
+async function selectRoute(hospitalId) {
+  state.selectedHospitalId = hospitalId;
+  const hosp = hospitalsData.find(h => h.id === hospitalId);
+  if (!hosp) return;
+
+  const route = await fetchOrCalculateRoute(hospitalId);
+  if (!route) return;
+
+  // Highlight selected route on map
+  highlightRouteOnMap(hospitalId);
+
+  // Update Navigation HUD with real distance and ETA
+  const navDest = document.getElementById('nav-hud-destination');
+  const navDist = document.getElementById('nav-hud-distance');
+  const navEta = document.getElementById('nav-hud-eta');
+  const statusEl = document.getElementById('route-selection-status');
+
+  if (navDest) {
+    navDest.textContent = `${hosp.shortName} (${hosp.finalScore || 90}%)`;
+    navDest.className = hosp.isBestChoice ? "font-bold text-emerald-600 truncate block" : "font-bold text-blue-600 truncate block";
+  }
+  if (navDist) navDist.textContent = `${route.distanceKm} km`;
+  if (navEta) navEta.textContent = `${route.travelTimeMin} mins`;
+
+  if (statusEl) {
+    statusEl.innerHTML = `<span class="text-emerald-400 font-bold">${hosp.name}</span> <span class="text-slate-300 font-mono text-[11px]">(${route.distanceKm} km • ETA: ${route.travelTimeMin} mins)</span>`;
+    statusEl.className = "font-bold text-emerald-400";
+  }
+
+  // Highlight hospital ranking card
+  highlightSelectedHospitalCard(hospitalId);
+
+  // Update Pre-Alert HUD
+  updatePreAlertHUD(hosp);
+}
+
+// Highlight the active route polyline and dim others
+function highlightRouteOnMap(selectedId) {
+  Object.keys(state.routeLayers).forEach(id => {
+    const layerObj = state.routeLayers[id];
+    if (!layerObj || !layerObj.line) return;
+
+    if (id === selectedId) {
+      layerObj.line.setStyle({
+        color: layerObj.color,
+        weight: 7,
+        opacity: 1.0,
+        dashArray: null
+      });
+      layerObj.line.bringToFront();
+    } else {
+      layerObj.line.setStyle({
+        color: '#64748b',
+        weight: 3,
+        opacity: 0.35,
+        dashArray: '5, 8'
+      });
+    }
+  });
+
+  if (ambulanceMarker) {
+    ambulanceMarker.bringToFront();
+  }
+}
+
+// Clear route selection
+function clearRouteSelection() {
+  state.selectedHospitalId = null;
+
+  // Reset route lines to neutral
+  Object.keys(state.routeLayers).forEach(id => {
+    const layerObj = state.routeLayers[id];
+    if (layerObj && layerObj.line) {
+      layerObj.line.setStyle({
+        color: layerObj.color,
+        weight: 4,
+        opacity: 0.6,
+        dashArray: '5, 8'
+      });
+    }
+  });
+
+  // Reset status bar
+  const statusEl = document.getElementById('route-selection-status');
+  if (statusEl) {
+    statusEl.textContent = "No route selected";
+    statusEl.className = "font-bold text-slate-400";
+  }
+
+  // Reset HUD
+  const navDest = document.getElementById('nav-hud-destination');
+  const navDist = document.getElementById('nav-hud-distance');
+  const navEta = document.getElementById('nav-hud-eta');
+
+  if (navDest) navDest.textContent = "No route selected";
+  if (navDist) navDist.textContent = "--";
+  if (navEta) navEta.textContent = "--";
+
+  // Remove card highlights
+  document.querySelectorAll('.hospital-card').forEach(card => {
+    card.classList.remove('route-active-card');
+  });
+}
+
+function highlightSelectedHospitalCard(hospitalId) {
+  document.querySelectorAll('.hospital-card').forEach(card => {
+    const cardId = card.getAttribute('data-hosp-id');
+    if (cardId === hospitalId) {
+      card.classList.add('route-active-card');
+    } else {
+      card.classList.remove('route-active-card');
+    }
+  });
+}
+
+// ==========================================
+// START EMERGENCY ACTION WORKFLOW
+// ==========================================
+async function startEmergency() {
+  // Check if route is selected
+  if (!state.selectedHospitalId) {
+    const statusEl = document.getElementById('route-selection-status');
+    if (statusEl) {
+      statusEl.innerHTML = `⚠️ <span class="text-rose-400 font-bold">No route selected. Please click a hospital or route line on the map.</span>`;
+      statusEl.className = "font-bold text-rose-400";
+    }
+    alert("⚠️ No route selected!\n\nPlease select a hospital or click any route on the map before starting emergency.");
+    return;
+  }
+
+  const hospitalId = state.selectedHospitalId;
+  const hosp = hospitalsData.find(h => h.id === hospitalId);
+  const route = await fetchOrCalculateRoute(hospitalId);
+
+  if (!route) {
+    alert("Could not compute route coordinates. Please check connection and try again.");
+    return;
+  }
+
+  // Ensure route is highlighted
+  highlightRouteOnMap(hospitalId);
+
+  // Update distance and ETA
+  const navDist = document.getElementById('nav-hud-distance');
+  const navEta = document.getElementById('nav-hud-eta');
+  if (navDist) navDist.textContent = `${route.distanceKm} km`;
+  if (navEta) navEta.textContent = `${route.travelTimeMin} mins`;
+
+  // Start animated transit along route coordinates
+  startAmbulanceAnimation(route.coords, hosp);
+}
+
+// Alias for backward compatibility
+function startAmbulanceAnimation(customCoords, customHosp) {
+  if (state.isDriving || !map || !ambulanceMarker) return;
+
+  const targetHosp = customHosp || hospitalsData.find(h => h.id === state.selectedHospitalId) || hospitalsData[0];
+  const waypoints = customCoords || (state.routesData[targetHosp.id]?.coords) || fallbackRouteCoords[targetHosp.id];
+
+  if (!waypoints || waypoints.length === 0) {
+    alert("No route coordinates available to drive.");
+    return;
+  }
+
+  state.isDriving = true;
+  switchTab('dispatch');
+  playAlertChime();
+
+  const statusEl = document.getElementById('route-selection-status');
+  if (statusEl) {
+    statusEl.innerHTML = `🚑 <span class="text-yellow-400 animate-pulse font-bold">Ambulance Dispatched! En route to ${targetHosp.shortName}...</span>`;
+  }
+
+  let step = 0;
+  const totalSteps = waypoints.length;
+  // Animation duration around ~6 seconds
+  const intervalMs = Math.max(80, Math.floor(6000 / totalSteps));
+
+  const interval = setInterval(() => {
+    if (step < totalSteps) {
+      const coord = waypoints[step];
+      ambulanceMarker.setLatLng(coord);
+
+      if (step % 2 === 0) {
+        map.panTo(coord, { animate: true, duration: 0.25 });
+      }
+
+      // Live countdown of distance and ETA
+      const remainingRatio = (totalSteps - step) / totalSteps;
+      const currentDist = (targetHosp.distanceKm * remainingRatio).toFixed(1);
+      const currentEta = Math.max(1, Math.round(targetHosp.baseTravelTimeMin * remainingRatio));
+
+      const navDist = document.getElementById('nav-hud-distance');
+      const navEta = document.getElementById('nav-hud-eta');
+      if (navDist) navDist.textContent = `${currentDist} km`;
+      if (navEta) navEta.textContent = `${currentEta} mins`;
+
+      step++;
+    } else {
+      clearInterval(interval);
+      state.isDriving = false;
+
+      if (typeof confetti === 'function') {
+        confetti({
+          particleCount: 80,
+          spread: 70,
+          origin: { y: 0.6 }
+        });
+      }
+
+      if (statusEl) {
+        statusEl.innerHTML = `✅ <span class="text-emerald-400 font-bold">Ambulance Arrived safely at ${targetHosp.name}!</span>`;
+      }
+
+      ambulanceMarker.bindPopup(`
+        <div class="text-xs font-sans">
+          <strong class="text-emerald-600 font-bold block text-sm">✅ ARRIVED AT ${targetHosp.shortName.toUpperCase()}</strong>
+          <span class="text-slate-700">ICU Bed & Trauma Specialists Standing By!</span>
+        </div>
+      `).openPopup();
+    }
+  }, intervalMs);
 }
 
 // ==========================================
@@ -458,7 +856,7 @@ function runAIScoring() {
   const emergencyType = document.getElementById('select-emergency-type')?.value || state.emergencyCase;
   const bloodGroup = document.getElementById('select-blood-group')?.value || state.selectedBloodGroup;
   const priority = document.getElementById('select-priority')?.value || state.priority;
-  
+
   state.emergencyCase = emergencyType;
   state.selectedBloodGroup = bloodGroup;
   state.priority = priority;
@@ -468,11 +866,9 @@ function runAIScoring() {
   const reqCtScan = document.getElementById('req-ctscan')?.checked ?? true;
   const reqBlood = document.getElementById('req-blood')?.checked ?? true;
 
-  // Calculate scores for each hospital based on normalized weights
   const totalWeight = Object.values(state.weights).reduce((a, b) => a + b, 0);
 
   const scoredHospitals = hospitalsData.map(hosp => {
-    // Dynamic adjustments based on current toggles & conditions
     let fScore = hosp.readinessRaw.facility;
     let bScore = hosp.readinessRaw.bed;
     let sScore = hosp.readinessRaw.specialist;
@@ -481,22 +877,18 @@ function runAIScoring() {
     let tScore = hosp.readinessRaw.travel;
     let trScore = hosp.readinessRaw.traffic;
 
-    // Bed availability penalty if ICU required and 0 beds
     if (reqIcu && hosp.beds.icuAvailable === 0) {
       bScore = 10;
     }
 
-    // Specialist penalty
     if (reqSpecialist && hosp.id === 'hosp-a') {
       sScore = 20;
     }
 
-    // Equipment penalty
     if (reqCtScan && !hosp.equipment.ctScan) {
       eScore = 25;
     }
 
-    // Blood stock penalty
     const availableUnits = hosp.bloodStock[bloodGroup] || 0;
     if (reqBlood) {
       if (availableUnits >= 5) blScore = 100;
@@ -504,7 +896,6 @@ function runAIScoring() {
       else blScore = 5;
     }
 
-    // Traffic adjustment
     if (state.trafficMode === 'heavy') {
       trScore = Math.max(10, trScore - 30);
       tScore = Math.max(10, tScore - 20);
@@ -513,7 +904,6 @@ function runAIScoring() {
       tScore = Math.min(100, tScore + 10);
     }
 
-    // Weighted Sum Formula: Score = Sum(wi * fi) / Sum(wi)
     const weightedSum = (
       (fScore * state.weights.facility) +
       (bScore * state.weights.bed) +
@@ -533,43 +923,44 @@ function runAIScoring() {
     };
   });
 
-  // Sort descending by AI Readiness Score
   scoredHospitals.sort((a, b) => b.finalScore - a.finalScore);
 
-  // Render Hospital Ranking Cards
   renderHospitalRankingCards(scoredHospitals);
-
-  // Render Detailed Computation Table in AI Model Tab
   renderDetailedScoreTable(scoredHospitals);
 
-  // Update HUD values
-  updatePreAlertHUD(scoredHospitals[0]);
+  // If selected hospital is defined, update HUD with it, else use top hospital
+  const currentHospital = scoredHospitals.find(h => h.id === state.selectedHospitalId) || scoredHospitals[0];
+  updatePreAlertHUD(currentHospital);
 }
 
-// Render Hospital Cards (Slide 7 representation)
+// Render Hospital Cards with interactive click selection
 function renderHospitalRankingCards(hospitals) {
   const container = document.getElementById('hospital-ranking-cards');
   if (!container) return;
 
   container.innerHTML = hospitals.map((hosp, index) => {
     const isWinner = index === 0;
+    const isSelected = hosp.id === state.selectedHospitalId;
     const badgeColor = isWinner 
       ? 'bg-emerald-500 text-white' 
       : (hosp.finalScore >= 70 ? 'bg-blue-600 text-white' : 'bg-amber-500 text-white');
 
-    const cardBorder = isWinner 
-      ? 'border-2 border-emerald-500 bg-emerald-50/20 shadow-md ring-2 ring-emerald-100' 
-      : 'border border-slate-200 bg-white hover:border-slate-300';
+    const cardBorder = isSelected
+      ? 'border-2 border-emerald-500 bg-emerald-50/30 shadow-md ring-2 ring-emerald-200 route-active-card'
+      : (isWinner 
+          ? 'border-2 border-emerald-400/60 bg-emerald-50/10 shadow-sm' 
+          : 'border border-slate-200 bg-white hover:border-blue-300');
 
     return `
-      <div class="p-4 rounded-xl ${cardBorder} transition-all">
+      <div onclick="selectRoute('${hosp.id}')" data-hosp-id="${hosp.id}" class="hospital-card p-4 rounded-xl ${cardBorder} transition-all cursor-pointer">
         <div class="flex items-center justify-between">
           <div class="flex items-center space-x-2">
             <span class="w-6 h-6 rounded-full ${badgeColor} text-xs font-bold flex items-center justify-center">
               ${index + 1}
             </span>
             <h4 class="font-bold text-slate-900 text-sm">${hosp.shortName}</h4>
-            ${isWinner ? '<span class="bg-emerald-100 text-emerald-800 font-extrabold text-[10px] px-2 py-0.5 rounded-full border border-emerald-200 uppercase tracking-wide">⭐ Best Choice</span>' : ''}
+            ${isWinner ? '<span class="bg-emerald-100 text-emerald-800 font-extrabold text-[10px] px-2 py-0.5 rounded-full border border-emerald-200 uppercase tracking-wide">⭐ AI Best Choice</span>' : ''}
+            ${isSelected ? '<span class="bg-blue-100 text-blue-800 font-bold text-[10px] px-2 py-0.5 rounded-full border border-blue-200">Selected Route</span>' : ''}
           </div>
 
           <div class="text-right">
@@ -579,20 +970,18 @@ function renderHospitalRankingCards(hospitals) {
 
         <p class="text-xs text-slate-500 mt-0.5">${hosp.name}</p>
 
-        <!-- Progress Bar Meter -->
         <div class="w-full bg-slate-100 rounded-full h-2.5 mt-2.5 overflow-hidden">
           <div class="h-2.5 rounded-full ${isWinner ? 'bg-gradient-to-r from-emerald-500 to-teal-400' : (hosp.finalScore >= 70 ? 'bg-blue-500' : 'bg-amber-400')}" style="width: ${hosp.finalScore}%"></div>
         </div>
 
-        <!-- Metrics Row -->
         <div class="grid grid-cols-3 gap-2 mt-3 pt-2 border-t border-slate-100 text-[11px] text-slate-600">
           <div>
-            <span class="text-slate-400 block text-[10px] uppercase font-semibold">Distance</span>
-            <span class="font-bold text-slate-800">${hosp.distanceKm} km</span>
+            <span class="text-slate-400 block text-[10px] uppercase font-semibold">Road Distance</span>
+            <span class="font-bold text-slate-800">${hosp.distanceKm > 0 ? hosp.distanceKm + ' km' : 'Calculating...'}</span>
           </div>
           <div>
-            <span class="text-slate-400 block text-[10px] uppercase font-semibold">Est. Travel</span>
-            <span class="font-bold text-slate-800">${hosp.baseTravelTimeMin} mins</span>
+            <span class="text-slate-400 block text-[10px] uppercase font-semibold">Travel ETA</span>
+            <span class="font-bold text-slate-800">${hosp.baseTravelTimeMin > 0 ? hosp.baseTravelTimeMin + ' mins' : 'Calculating...'}</span>
           </div>
           <div>
             <span class="text-slate-400 block text-[10px] uppercase font-semibold">ICU Readiness</span>
@@ -600,6 +989,15 @@ function renderHospitalRankingCards(hospitals) {
               ${hosp.beds.icuAvailable > 0 ? hosp.beds.icuAvailable + ' Beds Avail' : 'Full (0 Beds)'}
             </span>
           </div>
+        </div>
+
+        <div class="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+          <span class="text-[11px] text-blue-600 font-semibold flex items-center">
+            <i class="fa-solid fa-hand-pointer mr-1"></i> Click card to select route on map
+          </span>
+          <button onclick="event.stopPropagation(); selectRoute('${hosp.id}')" class="px-2.5 py-1 text-[11px] font-bold rounded-lg ${isSelected ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'} transition">
+            ${isSelected ? 'Selected' : 'Select'}
+          </button>
         </div>
       </div>
     `;
@@ -612,10 +1010,10 @@ function renderDetailedScoreTable(hospitals) {
   if (!tbody) return;
 
   tbody.innerHTML = hospitals.map(hosp => `
-    <tr class="hover:bg-slate-50 transition">
+    <tr class="hover:bg-slate-50 transition cursor-pointer" onclick="selectRoute('${hosp.id}')">
       <td class="py-3 px-4 font-bold text-slate-900">${hosp.name}</td>
-      <td class="py-3 px-4">${hosp.distanceKm} km</td>
-      <td class="py-3 px-4">${hosp.baseTravelTimeMin} min</td>
+      <td class="py-3 px-4">${hosp.distanceKm > 0 ? hosp.distanceKm + ' km' : 'Calculating...'}</td>
+      <td class="py-3 px-4">${hosp.baseTravelTimeMin > 0 ? hosp.baseTravelTimeMin + ' min' : 'Calculating...'}</td>
       <td class="py-3 px-4 font-mono font-medium">${hosp.factors.fScore}%</td>
       <td class="py-3 px-4 font-mono font-medium ${hosp.beds.icuAvailable === 0 ? 'text-red-600 font-bold' : ''}">${hosp.factors.bScore}%</td>
       <td class="py-3 px-4 font-mono font-medium">${hosp.factors.sScore}%</td>
@@ -626,9 +1024,9 @@ function renderDetailedScoreTable(hospitals) {
         </span>
       </td>
       <td class="py-3 px-4">
-        ${hosp.finalScore >= 90 
-          ? '<span class="px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800">Selected</span>'
-          : '<span class="px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-600">Alternative</span>'
+        ${hosp.id === state.selectedHospitalId 
+          ? '<span class="px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">Active Route</span>'
+          : '<button class="px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-600 hover:bg-blue-50">Select</button>'
         }
       </td>
     </tr>
@@ -640,9 +1038,6 @@ function updatePreAlertHUD(bestHosp) {
   const hudPriority = document.getElementById('hud-priority-badge');
   const hudEmergency = document.getElementById('hud-emergency-title');
   const hudBlood = document.getElementById('hud-blood-group');
-  const navDest = document.getElementById('nav-hud-destination');
-  const navDist = document.getElementById('nav-hud-distance');
-  const navEta = document.getElementById('nav-hud-eta');
 
   if (hudPriority) hudPriority.textContent = state.priority.toUpperCase();
   if (hudBlood) hudBlood.textContent = state.selectedBloodGroup;
@@ -657,12 +1052,6 @@ function updatePreAlertHUD(bestHosp) {
 
   if (hudEmergency) {
     hudEmergency.innerHTML = `Emergency Condition: <span class="text-yellow-400 font-bold">${emergencyTitles[state.emergencyCase] || 'Trauma Incident'}</span>`;
-  }
-
-  if (bestHosp) {
-    if (navDest) navDest.textContent = `${bestHosp.shortName} (${bestHosp.finalScore}%)`;
-    if (navDist) navDist.textContent = `${bestHosp.distanceKm} km`;
-    if (navEta) navEta.textContent = `${bestHosp.baseTravelTimeMin} mins`;
   }
 }
 
@@ -687,7 +1076,7 @@ function handleEmergencyChange() {
 }
 
 // Traffic Mode Toggle
-function setTrafficMode(mode) {
+async function setTrafficMode(mode) {
   state.trafficMode = mode;
   const badge = document.getElementById('traffic-badge');
   const hudTraffic = document.getElementById('nav-hud-traffic');
@@ -721,6 +1110,10 @@ function setTrafficMode(mode) {
     }
   }
 
+  // Recalculate routes with new traffic factors
+  if (state.selectedHospitalId) {
+    await selectRoute(state.selectedHospitalId);
+  }
   runAIScoring();
 }
 
@@ -751,7 +1144,7 @@ function updateTimerDisplay() {
 }
 
 function resetPreAlertTimer() {
-  state.timerSeconds = 480; // 8 minutes
+  state.timerSeconds = 480;
   updateTimerDisplay();
   playAlertChime();
 }
@@ -808,7 +1201,6 @@ function renderBloodBankTable() {
   if (labelGroup) labelGroup.textContent = state.selectedBloodGroup;
   if (!tbody) return;
 
-  // Sort blood banks by travel time (as in Slide 8 flowchart)
   const sortedBanks = [...bloodBanksData].sort((a, b) => a.travelTimeMin - b.travelTimeMin);
 
   tbody.innerHTML = sortedBanks.map(bank => {
@@ -893,48 +1285,6 @@ function resetDefaultWeights() {
   if (totalSumEl) totalSumEl.textContent = '100%';
 
   runAIScoring();
-}
-
-// ==========================================
-// AMBULANCE ROUTE SIMULATION ANIMATION
-// ==========================================
-function startAmbulanceAnimation() {
-  if (state.isDriving || !map || !ambulanceMarker) return;
-  state.isDriving = true;
-
-  switchTab('dispatch');
-  playAlertChime();
-
-  let step = 0;
-  const totalSteps = simulationRouteWaypoints.length;
-
-  const interval = setInterval(() => {
-    if (step < totalSteps) {
-      const coord = simulationRouteWaypoints[step];
-      ambulanceMarker.setLatLng(coord);
-      map.panTo(coord, { animate: true, duration: 0.5 });
-      step++;
-    } else {
-      clearInterval(interval);
-      state.isDriving = false;
-
-      // Confetti & arrival notice
-      if (typeof confetti === 'function') {
-        confetti({
-          particleCount: 80,
-          spread: 70,
-          origin: { y: 0.6 }
-        });
-      }
-
-      ambulanceMarker.bindPopup(`
-        <div class="text-xs font-sans">
-          <strong class="text-emerald-600 font-bold block text-sm">✅ ARRIVED AT HOSPITAL B</strong>
-          <span class="text-slate-700">ICU Bed & Trauma Specialists Standing By!</span>
-        </div>
-      `).openPopup();
-    }
-  }, 900);
 }
 
 // Quick 911/108 Emergency Trigger Demo

@@ -79,3 +79,20 @@
   border-color: #10b981;
   box-shadow: 0 0 15px rgba(16, 185, 129, 0.15);
 }
+
+/* Clickable Leaflet Layers & Routes */
+.leaflet-interactive, .route-clickable {
+  cursor: pointer !important;
+}
+
+/* Selected Route Highlight Pulse */
+.route-active-highlight {
+  filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.8));
+}
+
+.route-active-card {
+  border-color: #10b981 !important;
+  background-color: #f0fdf4 !important;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.25) !important;
+}
+
